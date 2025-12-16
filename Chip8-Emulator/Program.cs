@@ -29,7 +29,7 @@ class  Program
         };
 
         File.WriteAllBytes("test_rom.ch8", rom);
-        Console.WriteLine("[SETUP] Test ROM created.");
+        Console.WriteLine("[SETUP] Test ROM created.");Console.WriteLine($"[SETUP] ROM saved at: {Path.GetFullPath("test_rom.ch8")}");
     }
     static void Main()
     {
