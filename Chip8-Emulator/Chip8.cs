@@ -31,12 +31,15 @@ public class Chip8
     
     // -- KEYPAD -- //
     private byte[] keypad = new byte[16];
+    private int[] keyTimers = new int[16];
     
     
     // ########### SOFTWARE ############### //
     
+    // -- Display "screen" -- //
     private byte[] display = new byte[64 * 32];
     
+    // -- FontSet of hexadecimal characters -- //
     private readonly byte[] fontSet = 
     {
         0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -57,6 +60,9 @@ public class Chip8
         0xF0, 0x80, 0xF0, 0x80, 0x80  // F
     };
     
+    // -- RNG --
+    private Random rng = new Random();
+    
     
     
     // - FETCH - DECODE - EXCECUTE - //
@@ -65,7 +71,6 @@ public class Chip8
         // -- FETCH -- //
         // - Takes the next operation to perform (2 bytes) by gluing the "Memory[{PC, PC +1}]" in Binary - // 
         ushort opcode = (ushort)(memory[program_counter] << 8 | memory[program_counter + 1]);
-        Console.WriteLine($"PC: {program_counter} | Opcode: {opcode}");
         program_counter += 2;
     
         // -- DECODE -- //
@@ -81,18 +86,6 @@ public class Chip8
         // -- EXCECUTE -- //
         switch (instruction)
         {
-            // - Jump - //
-            case 0x1:
-                program_counter = nnn;
-                break;
-            
-            // - [Subroutine] Call instruction: Perform a task, but save the previous PC - //
-            case 0x2:
-                stack[stack_pointer] = program_counter;
-                stack_pointer++;
-                program_counter = nnn;
-                break;
-            
             // -  Return || Clear Screen - //
             case 0x0:
                 //- Return - //
@@ -103,6 +96,18 @@ public class Chip8
                 }
                 // - Clear - //
                 else {Array.Clear(display, 0, display.Length);}
+                break;
+            
+            // - Jump - //
+            case 0x1:
+                program_counter = nnn;
+                break;
+            
+            // - [Subroutine] Call instruction: Perform a task, but save the previous PC - //
+            case 0x2:
+                stack[stack_pointer] = program_counter;
+                stack_pointer++;
+                program_counter = nnn;
                 break;
             
             // - Set Register - //
@@ -162,7 +167,7 @@ public class Chip8
             
             // - Skip instructions - //
             case 0xE:
-                // - Depending on the value of nn, check if key stored in VX is being pressed or not- // 
+                // - Depending on the value of nn, check if a KEY (which index is stored in VX) is being pressed or not- // 
                 if (nn == 0x9E && keypad[general_registers[x]] == 1) program_counter += 2; // - 9E and key pressed? Skip - //
                 else if (nn == 0xA1 && keypad[general_registers[x]] == 0) program_counter += 2; // - A1 and key not pressed? Skip - // 
                 break;
@@ -171,17 +176,23 @@ public class Chip8
             case 0xF:
                 switch (nn)
                 {
+                    // - GET the value of the DELAY TIMER - // 
                     case 0x07:
                         general_registers[x] = delay_timer;
                         break;
+                    
+                    // - SET the value of the DELAY TIMER - // 
                     case 0x15:
                         delay_timer = general_registers[x];
                         break;
+                    
+                    // - SET the value of the SOUND TIMER - // 
                     case 0x18:
                         sound_timer = general_registers[x];
                         break;
+                    
+                    // - Wait for an input - //
                     case 0x0A:
-
                         bool keyPressed = false;
                         
                         for (byte i = 0; i < keypad.Length; i++)
@@ -193,9 +204,40 @@ public class Chip8
                                 break;
                             }
                         }
-
+                        // - Don't continue until a key is pressed - //
                         if (!keyPressed) program_counter -= 2;
-
+                        break;
+                    
+                    // - Add to Index - //
+                    case 0x1E:
+                        index_register += general_registers[x];
+                        break;
+                    
+                    // - Font Helper - //
+                    case 0x29:
+                        index_register = (ushort)(general_registers[x] * 5); // - Font is loaded at V0, and characters are 5 bytes long - // 
+                        break;
+                    
+                    // - ScoreBoard - //
+                    case 0x33:
+                        memory[index_register] = (byte)(general_registers[x] / 100); // - First Digit - //
+                        memory[index_register + 1] = (byte)((general_registers[x] / 10) % 10); // - Second Digit - //
+                        memory[index_register + 2] = (byte)(general_registers[x] % 10); // - Third Digit - //
+                        break;
+                    
+                    case 0x55:
+                        for (byte i = 0; i<= x; i++)
+                        {
+                            memory[index_register + 1] = general_registers[i];
+                        }
+                        index_register += (ushort)(x + 1); 
+                        break;
+                    case 0x65:
+                        for (byte i = 0; i <= x; i++)
+                        {
+                            general_registers[i] = memory[index_register + 1];
+                        }
+                        index_register += (ushort)(x + 1); 
                         break;
                 }
                 break;
@@ -205,61 +247,81 @@ public class Chip8
                 byte n = (byte)(opcode & 0x000F);
                 switch (n)
                 {
-                    // - Vx = Vy - //
+                    // - SET: Vx = Vy - //
                     case 0x0:
                         general_registers[x] = general_registers[y];
                         break;
                     
-                    // - Vx = Vx OR Vy - //
+                    // - OR: Vx = Vx OR Vy - //
                     case 0x1:
                         general_registers[x] = (byte)(general_registers[x] | general_registers[y]);
                         break;
                     
-                    // - Vx = Vx AND Vy - //
+                    // - AND: Vx = Vx AND Vy - //
                     case 0x2:
                         general_registers[x] = (byte)(general_registers[x] & general_registers[y]);
                         break;
                     
-                    // - Vx = Vx XOR Vy - //
+                    // - XOR: Vx = Vx XOR Vy - //
                     case 0x3:
                         general_registers[x] = (byte)(general_registers[x] ^ general_registers[y]);
                         break;
                     
-                    // - Vx = Vx + Vy
+                    // - ADD: Vx = Vx + Vy
                     case 0x4:
                         int add_result = (general_registers[x] + general_registers[y]);
                         general_registers[0xF] = (add_result > 255) ? (byte)1 : (byte)0; // - Checks overflow: VF = 1 if true, = 0 if not.
                         general_registers[x] = (byte)add_result;
                         break;
                     
-                    // - Vx = Vx - Vy - //
+                    // - SUBSTRACT: Vx = Vx - Vy - //
                     case 0x5:
                         int sus_result = (general_registers[x] - general_registers[y]);
                         general_registers[0xF] = (general_registers[x] >= general_registers[y]) ? (byte)1 : (byte)0; // - Checks positive: VF = 1 if true, = 0 if not.
                         general_registers[x] = (byte)sus_result;
                         break;
                     
-                    // - Vx = Vy - Vx - //
+                    // - REVERSE SUBSTRACT: Vx = Vy - Vx - //
                     case 0x7:
                         int inv_sus_result = (general_registers[y] - general_registers[x]);
                         general_registers[0xF] = (general_registers[y] >= general_registers[x]) ? (byte)1 : (byte)0; // - Checks positive: VF = 1 if true, = 0 if not.
                         general_registers[x] = (byte)inv_sus_result;
                         break;
                     
-                    // - Vx = Vx >> 1 (Shift right) - //
+                    // - SHIFT RIGHT: Vx = Vx >> 1 - //
                     case 0x6:
                         general_registers[0xF] = (byte)(general_registers[x] & 0x1); // - Catches the lost (rightmost) bit
                         general_registers[x] >>= 1;
                         break;
                     
-                    // - Vx = Vx << 1 (Shift left) - //
+                    // - SHIFT LEFT: Vx = Vx << 1  - //
                     case 0xE:
                         general_registers[0xF] = (byte)((general_registers[x] >> 7) & 0x1); // - Catches the lost (leftmost) bit
                         general_registers[x] <<= 1;
                         break;
                 }
+                break;
+            
+            // - Randomness (RNG) - //
+            case 0xC:
+                general_registers[x] = (byte)((byte)rng.Next(0, 256) & (nn));
                 
                 break;
+            
+            // - Conditional Skips - //
+            case 0x3:
+                if (general_registers[x] == nn) program_counter += 2;
+                break;
+            case 0x4:
+                if (general_registers[x] != nn) program_counter += 2;
+                break;
+            case 0x5:
+                if(general_registers[x] == general_registers[y]) program_counter += 2;
+                break;
+            case 0x9:
+                if(general_registers[x] != general_registers[y]) program_counter += 2;
+                break;
+            
             
             default:
                 Console.WriteLine($"[SYSTEM] Unknown Opcode: {opcode:X4}");
@@ -334,64 +396,52 @@ public class Chip8
     // -- Process Inputs -- //
     public void ProcessInputs()
     {
-        Array.Clear(keypad);
-        if (Console.KeyAvailable)
+        for (int i = 0; i < 16; i++)
         {
-            var keyPressed =  Console.ReadKey(true);
-            switch (keyPressed.Key)
+            if (keyTimers[i] > 0)
             {
-                case ConsoleKey.D1:
-                    keypad[0x1] = 1;
-                    break;
-                case ConsoleKey.D2:
-                    keypad[0x2] = 1;
-                    break;
-                case ConsoleKey.D3:
-                    keypad[0x3] = 1;
-                    break;
-                case ConsoleKey.D4:
-                    keypad[0xC] = 1;
-                    break;
-                case ConsoleKey.Q:
-                    keypad[0x4] = 1;
-                    break;
-                case ConsoleKey.W:
-                    keypad[0x5] = 1;
-                    break;
-                case ConsoleKey.E:
-                    keypad[0x6] = 1;
-                    break;
-                case ConsoleKey.R:
-                    keypad[0xD] = 1;
-                    break;
-                case ConsoleKey.A:
-                    keypad[0x7] = 1;
-                    break;
-                case ConsoleKey.S:
-                    keypad[0x8] = 1;
-                    break;
-                case ConsoleKey.D:
-                    keypad[0x9] = 1;
-                    break;
-                case ConsoleKey.F:
-                    keypad[0xE] = 1;
-                    break;
-                case ConsoleKey.Z:
-                    keypad[0xA] = 1;
-                    break;
-                case ConsoleKey.X:
-                    keypad[0x0] = 1;
-                    break;
-                case ConsoleKey.C:
-                    keypad[0xB] = 1;
-                    break;
-                case ConsoleKey.V:
-                    keypad[0xF] = 1;
-                    break;
+                keyTimers[i]--; 
+                keypad[i] = 1; // Keep the key "Pressed" in the emulator
+            }
+            else
+            {
+                keypad[i] = 0; // Time is up, release the key
             }
         }
-
-
+        
+        if (Console.KeyAvailable)
+        {
+            var key = Console.ReadKey(true).Key;
+            int chip8Key = -1;
+            
+            switch (key)
+            {
+                case ConsoleKey.D1: chip8Key = 0x1; break;
+                case ConsoleKey.D2: chip8Key = 0x2; break;
+                case ConsoleKey.D3: chip8Key = 0x3; break;
+                case ConsoleKey.D4: chip8Key = 0xC; break;
+            
+                case ConsoleKey.Q:  chip8Key = 0x4; break; 
+                case ConsoleKey.W:  chip8Key = 0x5; break;
+                case ConsoleKey.E:  chip8Key = 0x6; break;
+                case ConsoleKey.R:  chip8Key = 0xD; break;
+            
+                case ConsoleKey.A:  chip8Key = 0x7; break;
+                case ConsoleKey.S:  chip8Key = 0x8; break;
+                case ConsoleKey.D:  chip8Key = 0x9; break;
+                case ConsoleKey.F:  chip8Key = 0xE; break;
+            
+                case ConsoleKey.Z:  chip8Key = 0xA; break;
+                case ConsoleKey.X:  chip8Key = 0x0; break;
+                case ConsoleKey.C:  chip8Key = 0xB; break;
+                case ConsoleKey.V:  chip8Key = 0xF; break;
+            }
+            
+            if (chip8Key != -1)
+            {
+                keyTimers[chip8Key] = 5; 
+            }
+        }
     }
     
     // -- CONSTRUCTOR, like a turn on button -- //
@@ -399,7 +449,8 @@ public class Chip8
     {
         program_counter = 512; // - The first 512 bits are reserved for static data -
         Array.Clear(general_registers); // - Clears all registers -
-        delay_timer = 0; // - Resets timers
+        // - Resets timers - //
+        delay_timer = 0; 
         sound_timer = 0;
         Array.Copy(fontSet, 0, memory, 0, fontSet.Length); // - Puts the fontSet in memory -
     }
